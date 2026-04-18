@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Охота: Гироскоп</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.60.0/phaser.min.js"></script>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        #game-container { width: 100vw; height: 100vh; }
+        
+        /* Экран старта для iOS */
+        #permission-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); color: white;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 100; text-align: center; padding: 20px;
+        }
+        button {
+            padding: 15px 30px; font-size: 20px; background: #4CAF50; color: white;
+            border: none; border-radius: 10px; cursor: pointer; margin-top: 20px;
+        }
+        .wood-frame {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; border: 12px solid transparent;
+            border-image: url('https://www.transparenttextures.com/patterns/wood-pattern.png') 30 stretch;
+            box-shadow: inset 0 0 50px rgba(0,0,0,0.5); z-index: 50;
+        }
+    </style>
+</head>
+<body>
+
+<div id="permission-overlay">
+    <h2>Охота: Классика</h2>
+    <p>Для прицеливания наклоняйте телефон вверх-вниз и влево-вправо.</p>
+    <button id="start-btn">НАЧАТЬ ИГРУ</button>
+</div>
+
+<div class="wood-frame"></div>
+<div id="game-container"></div>
+
+<script>
+    let tilt = { x: 0, y: 0 };
+    let initialTilt = null;
+    let isGameStarted = false;
+
+    const config = {
+        type: Phaser.AUTO,
+        parent: 'game-container',
+        width: window.innerWidth,
+        height: window.innerHeight,
+        scene: { preload, create, update }
+    };
+
+    const game = new Phaser.Game(config);
+    let crosshair, animal, ammoText;
+    let ammo = 10;
+
+    function preload() {
+        this.load.image('bg', 'https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=1200&q=80'); // Луга
+        this.load.image('crosshair', 'https://cdn-icons-png.flaticon.com/512/116/116905.png'); 
+        this.load.image('target', 'https://pngimg.com/uploads/hare/hare_PNG41.png'); // Заяц
+    }
+
+    function create() {
+        const width = this.cameras.main.width;
+        const height = this.cameras.main.height;
+
+        // Фон с небольшим запасом по краям для "панорамирования"
+        let bg = this.add.image(width/2, height/2, 'bg').setDisplaySize(width * 1.5, height * 1.5);
+        
+        animal = this.add.sprite(0, 0, 'target').setScale(0.3).setAlpha(0);
+        crosshair = this.add.image(width/2, height/2, 'crosshair').setScale(0.08).setDepth(10);
+
+        // HUD
+        ammoText = this.add.text(width - 150, height - 50, 'ПАЛЕТЫ: 10', { 
+            fontSize: '18px', fill: '#0f0', backgroundColor: '#000' 
+        }).setScrollFactor(0);
+
+        // Обработка выстрела (тап по экрану)
+        this.input.on('pointerdown', () => {
+            if (ammo > 0) shoot.call(this);
+        });
+
+        setInterval(() => spawnAnimal.call(this), 5000);
+    }
+
+    function update() {
+        if (!isGameStarted) return;
+
+        // Целевая позиция на основе наклона
+        // tilt.x (gamma) - влево/вправо, tilt.y (beta) - вперед/назад
+        let targetX = (this.cameras.main.width / 2) + (tilt.x * 15);
+        let targetY = (this.cameras.main.height / 2) + (tilt.y * 15);
+
+        // Плавное следование прицела (Lerp)
+        crosshair.x = Phaser.Math.Linear(crosshair.x, targetX, 0.2);
+        crosshair.y = Phaser.Math.Linear(crosshair.y, targetY, 0.2);
+
+        // Ограничения
+        crosshair.x = Phaser.Math.Clamp(crosshair.x, 50, this.cameras.main.width - 50);
+        crosshair.y = Phaser.Math.Clamp(crosshair.y, 50, this.cameras.main.height - 50);
+    }
+
+    function spawnAnimal() {
+        if (animal.alpha > 0) return;
+        animal.x = Phaser.Math.Between(100, this.cameras.main.width - 100);
+        animal.y = Phaser.Math.Between(200, this.cameras.main.height - 200);
+        animal.setAlpha(1);
+        
+        // Убегает через 4 секунды
+        this.time.delayedCall(4000, () => {
+            if (animal.alpha > 0) animal.setAlpha(0);
+        });
+    }
+
+    function shoot() {
+        ammo--;
+        ammoText.setText(`ПАЛЕТЫ: ${ammo}`);
+        
+        this.cameras.main.shake(100, 0.01);
+
+        const dist = Phaser.Math.Distance.Between(crosshair.x, crosshair.y, animal.x, animal.y);
+        
+        if (dist < 50 && animal.alpha > 0) {
+            // Попадание
+            animal.setTint(0xff0000);
+            this.time.delayedCall(300, () => {
+                animal.setAlpha(0);
+                animal.clearTint();
+            });
+            // Тут должен быть запрос к API Telegram (Stars/Coins)
+        }
+    }
+
+    // ЛОГИКА ГИРОСКОПА
+    document.getElementById('start-btn').addEventListener('click', async () => {
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            try {
+                const permission = await DeviceOrientationEvent.requestPermission();
+                if (permission === 'granted') {
+                    window.addEventListener('deviceorientation', handleOrientation);
+                }
+            } catch (error) {
+                console.error(error);
+            }
+        } else {
+            window.addEventListener('deviceorientation', handleOrientation);
+        }
+
+        document.getElementById('permission-overlay').style.display = 'none';
+        isGameStarted = true;
+    });
+
+    function handleOrientation(event) {
+        if (initialTilt === null) {
+            initialTilt = { x: event.gamma, y: event.beta };
+        }
+
+        // Вычитаем начальное положение, чтобы играть можно было в любом удобном положении
+        tilt.x = event.gamma - initialTilt.x;
+        tilt.y = event.beta - initialTilt.y;
+    }
+</script>
+</body>
+</html>
