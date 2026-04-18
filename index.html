@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Охота: Гироскоп 360</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.60.0/phaser.min.js"></script>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: sans-serif; }
+        #game-container { width: 100vw; height: 100vh; }
+        
+        #permission-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); color: white;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            z-index: 100; text-align: center; padding: 20px;
+        }
+        button {
+            padding: 15px 40px; font-size: 24px; background: #5d4037; color: #fff;
+            border: 3px solid #3e2723; border-radius: 8px; cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+        .wood-frame {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; border: 15px solid transparent;
+            border-image: url('https://www.transparenttextures.com/patterns/wood-pattern.png') 30 stretch;
+            box-sizing: border-box; z-index: 50;
+            box-shadow: inset 0 0 100px rgba(0,0,0,0.4);
+        }
+    </style>
+</head>
+<body>
+
+<div id="permission-overlay">
+    <h1 style="color: #d7ccc8;">ОХОТА: КЛАССИКА</h1>
+    <p>Поверните телефон как вам удобно и нажмите кнопку</p>
+    <button id="start-btn">В ЛЕС</button>
+</div>
+
+<div class="wood-frame"></div>
+<div id="game-container"></div>
+
+<script>
+    let tilt = { x: 0, y: 0 };
+    let initialTilt = null;
+    let isGameStarted = false;
+    let orientationType = 'portrait'; // portrait или landscape
+
+    const config = {
+        type: Phaser.AUTO,
+        parent: 'game-container',
+        scale: {
+            mode: Phaser.Scale.RESIZE, // Авто-подстройка под размер окна
+            autoCenter: Phaser.Scale.CENTER_BOTH
+        },
+        scene: { preload, create, update }
+    };
+
+    const game = new Phaser.Game(config);
+    let crosshair, animal, ammoText, bg;
+    let ammo = 10;
+
+    function preload() {
+        this.load.image('bg', 'https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=1200&q=80');
+        this.load.image('crosshair', 'https://cdn-icons-png.flaticon.com/512/116/116905.png'); 
+        this.load.image('target', 'https://pngimg.com/uploads/hare/hare_PNG41.png');
+    }
+
+    function create() {
+        const { width, height } = this.scale;
+
+        // Фон делаем с запасом, чтобы при повороте не было дырок
+        bg = this.add.image(width/2, height/2, 'bg').setOrigin(0.5);
+        updateBackgroundSize.call(this);
+
+        animal = this.add.sprite(0, 0, 'target').setScale(0.3).setAlpha(0);
+        crosshair = this.add.image(width/2, height/2, 'crosshair').setScale(0.08).setDepth(10);
+
+        // UI: Текст патронов
+        ammoText = this.add.text(width - 40, height - 40, 'ПАЛЕТЫ: 10', { 
+            fontSize: '22px', fill: '#4CAF50', fontStyle: 'bold', stroke: '#000', strokeThickness: 4
+        }).setOrigin(1, 1).setScrollFactor(0);
+
+        // Реакция на изменение размера экрана (поворот)
+        this.scale.on('resize', (gameSize) => {
+            const { width, height } = gameSize;
+            updateBackgroundSize.call(this);
+            ammoText.setPosition(width - 40, height - 40);
+            checkOrientation();
+        });
+
+        this.input.on('pointerdown', () => { if(isGameStarted) shoot.call(this); });
+        
+        setInterval(() => { if(isGameStarted) spawnAnimal.call(this); }, 4000);
+        checkOrientation();
+    }
+
+    function updateBackgroundSize() {
+        const { width, height } = this.scale;
+        const scale = Math.max(width / bg.width, height / bg.height) * 1.2;
+        bg.setScale(scale);
+        bg.setPosition(width/2, height/2);
+    }
+
+    function checkOrientation() {
+        orientationType = window.innerWidth > window.innerHeight ? 'landscape' : 'portrait';
+    }
+
+    function update(time) {
+        if (!isGameStarted) return;
+
+        const { width, height } = this.scale;
+        
+        // Математика прицела: 
+        // В горизонтальном режиме Beta и Gamma меняются ролями
+        let targetX, targetY;
+        
+        if (orientationType === 'portrait') {
+            targetX = (width / 2) + (tilt.x * 20);
+            targetY = (height / 2) + (tilt.y * 20);
+        } else {
+            // В ландшафте наклон телефона "вперед-назад" — это Gamma
+            targetX = (width / 2) + (tilt.y * 20); 
+            targetY = (height / 2) - (tilt.x * 20);
+        }
+
+        // Плавное следование
+        crosshair.x = Phaser.Math.Linear(crosshair.x, targetX, 0.15);
+        crosshair.y = Phaser.Math.Linear(crosshair.y, targetY, 0.15);
+
+        // Ограничения краев
+        crosshair.x = Phaser.Math.Clamp(crosshair.x, 60, width - 60);
+        crosshair.y = Phaser.Math.Clamp(crosshair.y, 60, height - 60);
+    }
+
+    function spawnAnimal() {
+        if (animal.alpha > 0) return;
+        const { width, height } = this.scale;
+        animal.setPosition(Phaser.Math.Between(100, width-100), Phaser.Math.Between(150, height-150));
+        animal.setAlpha(1).setScale(0.1);
+        
+        // Плавное появление (как в оригинале)
+        this.tweens.add({ targets: animal, scale: 0.3, duration: 500 });
+
+        this.time.delayedCall(3500, () => {
+            if (animal.alpha > 0) {
+                this.tweens.add({ targets: animal, alpha: 0, duration: 300 });
+            }
+        });
+    }
+
+    function shoot() {
+        if (ammo <= 0) return;
+        ammo--;
+        ammoText.setText(`ПАЛЕТЫ: ${ammo}`);
+        
+        this.cameras.main.shake(150, 0.005);
+
+        const dist = Phaser.Math.Distance.Between(crosshair.x, crosshair.y, animal.x, animal.y);
+        
+        if (dist < 50 && animal.alpha > 0) {
+            animal.setTint(0xff0000);
+            this.tweens.add({
+                targets: animal,
+                y: animal.y + 100,
+                alpha: 0,
+                duration: 600,
+                onComplete: () => animal.clearTint()
+            });
+        }
+    }
+
+    // РАБОТА С ДАТЧИКАМИ
+    document.getElementById('start-btn').addEventListener('click', async () => {
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+            const permission = await DeviceOrientationEvent.requestPermission();
+            if (permission === 'granted') {
+                window.addEventListener('deviceorientation', handleOrientation);
+            }
+        } else {
+            window.addEventListener('deviceorientation', handleOrientation);
+        }
+
+        document.getElementById('permission-overlay').style.fadeOut = 500;
+        setTimeout(() => {
+            document.getElementById('permission-overlay').style.display = 'none';
+            isGameStarted = true;
+        }, 500);
+    });
+
+    function handleOrientation(event) {
+        if (initialTilt === null) {
+            // Калибровка под текущее положение рук
+            initialTilt = { x: event.gamma, y: event.beta };
+        }
+        
+        // Вычисляем отклонение
+        tilt.x = event.gamma - initialTilt.x;
+        tilt.y = event.beta - initialTilt.y;
+    }
+</script>
+</body>
+</html>
